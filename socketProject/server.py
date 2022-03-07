@@ -7,24 +7,21 @@ from numpy import number
 PORT = 31250
 SERVER = "169.254.120.74" # pi ip
 #SERVER = "169.254.131.107" #windows ip
-HEADER = 64 #tells length of message
 FORMAT = 'utf-8'
+MSG_LENGTH = 2048
 ADDR = (SERVER, PORT)
 server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 server.bind(ADDR)
 
-
+global reg_players #global so it can be used in all threads
+global main_board #global so it can be used in all threads
+reg_players = []
 def send(conn, msg):
     message = msg.encode(FORMAT)
-    msg_length = len(message)
-    send_length = str(msg_length).encode(FORMAT)
-    send_length += b' ' *  (HEADER - len(send_length))
-    conn.send(send_length) #this is the header that tells how long the next message will be
     conn.send(message)
 
-    
 # Game logic stuff here
-class player: #player has their name and their hand of cards
+class player_class: #player has their name and their hand of cards
     def __init__(self, name, conn):
         self.hand = []
         self.name = name
@@ -43,18 +40,18 @@ class board_state:
         if deckvals[i] == 2:
             deckvals[i] = -2
     deckstrs = []
-    for cardnum in decknums:
+    for cardnum in decknums: #letter represents suit, space is for padding between cards
         if (cardnum >= 1 and cardnum <= 13):
-            suit = 'D'
+            suit = 'D '
             suitmod = 0
         elif (cardnum >= 14 and cardnum <= 26):
-            suit = 'C'
+            suit = 'C '
             suitmod = 13
         elif (cardnum >= 27 and cardnum <= 39):
-            suit = 'H'
+            suit = 'H '
             suitmod = 26
         elif (cardnum >= 40 and cardnum <= 52):
-            suit = 'S'
+            suit = 'S '
             suitmod = 39
         if(deckvals[cardnum-1] <= 9):
             deckstrs.append(" " + str(cardnum-suitmod) + suit)
@@ -65,7 +62,7 @@ class board_state:
     def __init__(self):
         self.deck = board_state.deckstrs.copy() #take a fresh deck for this instance of the board
         self.discard = []
-        self.players = {player("testplayer")}
+        self.players = []
     def shuffle_deck(self):
         random.shuffle(self.deck)
     def discard_card(self, card):
@@ -79,30 +76,44 @@ class board_state:
             player.hand.append(self.deck.pop())
             player.hand.append(self.deck.pop())
         #loop until each player has 6 cards. in each iteration ask the player whether they want to flip a card or take from the discard.
-def send_board(board): 
-    pass
+def send_board(player, board): 
+    send_string = f"player {player.name}'s hand:\n"
+    for card in player.hand:
+        send_string = send_string + card
+    num_cards = len(player.hand)
+    for c in range(6 - num_cards):
+        if c + num_cards == 3:
+            send_string = send_string + "\n"
+        send_string = send_string + "*** "
+    send_string = send_string + "\n"
+    send(player.conn, send_string)
+        
 def play_game(players, board): #play game takes a player object for this thread and then a board state shared between players
     for player in players:
         board.register_player(player)
     for player in players: #give each player two cards
         player.hand.append(board.deck.pop())
         player.hand.append(board.deck.pop())
-        send(player.conn("the board state is: "))
+        send_board(player,board)
 
-    
+ 
 def handle_message(conn, message):
     message = message.split()
-    global reg_players #global so it can be used in all threads
-    global main_board #global so it can be used in all threads
-    reg_players = []
+
     if message[0] == "register":
         print('register handler')
-        reg_players.append(player(message[1], conn))
+        tempplayer = player_class(message[1], conn)
+        reg_players.append(tempplayer)
+        print('registered players:')
+        send(conn, f"\n[RESPONSE] player {message[1]} registered on ip {message[2]} on port {message[3]}")
+        #for player in reg_players:
+            #print(player.name)
     elif message[0] == "query" and message[1] == "players":
         print('query players handler')
     elif message[0] == "start" and message[1] == "game":
         print('start game handler')
         main_board = board_state()
+        main_board.shuffle_deck()
         play_game(reg_players, main_board)
     elif message[0] == "query" and message[1] == "games":
         print('query games handler')
@@ -110,17 +121,16 @@ def handle_message(conn, message):
         print('end game handler')
     elif message[0] == "de-register":
         print('de-register handler')
-
+    else:
+        send(conn, "command not understood")
+    return True
 #networking receiver here
 def handle_client(conn, addr):
     print(f"new connection: {addr} connected")
     connected = True
     while connected:
-        msg_length = conn.recv(HEADER).decode(FORMAT)
-        if msg_length:
-            msg_length = int(msg_length)
-            msg = conn.recv(msg_length).decode(FORMAT)
-            connected = handle_message(conn, msg)
+        msg = conn.recv(MSG_LENGTH).decode(FORMAT)
+        connected = handle_message(conn, msg)
     conn.close()
 #begin the program
 def start():
